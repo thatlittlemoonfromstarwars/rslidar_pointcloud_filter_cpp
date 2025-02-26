@@ -27,6 +27,8 @@ public:
     // Filtering Parameters
     this->declare_parameter<float>("min_height", -0.335 - 0.2339 + 0.05);
     this->declare_parameter<float>("max_height", 0.5);
+    this->declare_parameter<bool>("filter_rings", true);
+    this->declare_parameter<bool>("filter_height", true);
     // LaserScan Parameters
     this->declare_parameter<float>("scan_angle_min", -M_PI);
     this->declare_parameter<float>("scan_angle_max", M_PI);
@@ -53,6 +55,8 @@ public:
     // Get parameters
     this->get_parameter("min_height", min_height_);
     this->get_parameter("max_height", max_height_);
+    this->get_parameter("filter_rings", filter_rings_);
+    this->get_parameter("filter_height", filter_height_);
     this->get_parameter("scan_angle_min", scan_angle_min_);
     this->get_parameter("scan_angle_max", scan_angle_max_);
     this->get_parameter("scan_angle_increment", scan_angle_increment_);
@@ -62,7 +66,24 @@ public:
     // Calculate the number of bins in the LaserScan message
     num_bins_ = static_cast<int>((scan_angle_max_ - scan_angle_min_) / scan_angle_increment_);
 
-    RCLCPP_INFO(this->get_logger(), "PointCloud filter node has started.");
+    RCLCPP_INFO(this->get_logger(), 
+  "PointCloud filter node has started with the following parameters:\n"
+  "min_height: %f\n"
+  "max_height: %f\n"
+  "filter_rings: %s\n"
+  "filter_height: %s\n"
+  "scan_angle_min: %f\n"
+  "scan_angle_max: %f\n"
+  "scan_angle_increment: %f\n"
+  "scan_range_min: %f\n"
+  "scan_range_max: %f\n"
+  "num_bins: %d",
+  min_height_, max_height_,
+  filter_rings_ ? "true" : "false",
+  filter_height_ ? "true" : "false",
+  scan_angle_min_, scan_angle_max_, scan_angle_increment_,
+  scan_range_min_, scan_range_max_,
+  num_bins_);
   }
 
 private:
@@ -72,43 +93,60 @@ private:
     pcl::PointCloud<pcl::PointXYZI>::Ptr input_cloud(new pcl::PointCloud<pcl::PointXYZI>());
     pcl::fromROSMsg(*msg, *input_cloud);
 
-    // --- Step 1: Remove LiDAR Rings ---
-    const int block_size = 16;  
-    size_t total_points = input_cloud->points.size();
-    size_t num_blocks = total_points / block_size;
+    // Create an intermediate cloud pointer to use in the subsequent processing.
+    pcl::PointCloud<pcl::PointXYZI>::Ptr intermediate_cloud(new pcl::PointCloud<pcl::PointXYZI>());
 
-    pcl::PointCloud<pcl::PointXYZI>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZI>());
-    filtered_cloud->header = input_cloud->header;
-
-    for (size_t i = 0; i < num_blocks; ++i)
+    if (filter_rings_)
     {
-      if ((i % 2) == 0)  // Keep even-indexed blocks
+      // --- Step 1: Remove LiDAR Rings ---
+      const int block_size = 16;
+      size_t total_points = input_cloud->points.size();
+      size_t num_blocks = total_points / block_size;
+      intermediate_cloud->header = input_cloud->header;
+
+      for (size_t i = 0; i < num_blocks; ++i)
       {
-        for (int j = 0; j < block_size; ++j)
+        if ((i % 2) == 0)  // Keep even-indexed blocks
         {
-          size_t idx = i * block_size + j;
-          if (idx < input_cloud->points.size())
+          for (int j = 0; j < block_size; ++j)
           {
-            const auto & pt = input_cloud->points[idx];
-            if (std::isfinite(pt.x) && std::isfinite(pt.y) && std::isfinite(pt.z))
+            size_t idx = i * block_size + j;
+            if (idx < input_cloud->points.size())
             {
-              filtered_cloud->points.push_back(pt);  // Preserve intensity
+              const auto & pt = input_cloud->points[idx];
+              if (std::isfinite(pt.x) && std::isfinite(pt.y) && std::isfinite(pt.z))
+              {
+                intermediate_cloud->points.push_back(pt);  // Preserve intensity
+              }
             }
           }
         }
       }
     }
+    else
+    {
+      // If ring filtering is disabled, just use the original point cloud.
+      intermediate_cloud = input_cloud;
+    }
 
     // --- Step 2: Apply Height Filtering ---
     pcl::PointCloud<pcl::PointXYZI>::Ptr height_filtered_cloud(new pcl::PointCloud<pcl::PointXYZI>());
-    for (const auto & pt : filtered_cloud->points)
+
+    if(filter_height_)
     {
-      if (pt.z >= min_height_ && pt.z <= max_height_)
+      for (const auto & pt : intermediate_cloud->points)
       {
-        height_filtered_cloud->points.push_back(pt);
+        if (pt.z >= min_height_ && pt.z <= max_height_)
+        {
+          height_filtered_cloud->points.push_back(pt);
+        }
       }
     }
-    height_filtered_cloud->header = filtered_cloud->header;
+    else
+    {
+      height_filtered_cloud = intermediate_cloud;
+    }
+    height_filtered_cloud->header = intermediate_cloud->header;
 
     // --- Publish the Filtered 3D Point Cloud ---
     publishFilteredPointCloud(msg->header, height_filtered_cloud);
@@ -165,6 +203,8 @@ private:
   // Filtering parameters
   float min_height_;
   float max_height_;
+  bool filter_rings_;
+  bool filter_height_;
 
   // LaserScan parameters
   float scan_angle_min_;
