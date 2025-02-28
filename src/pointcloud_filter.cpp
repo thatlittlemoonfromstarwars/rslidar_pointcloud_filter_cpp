@@ -29,6 +29,8 @@ public:
     this->declare_parameter<float>("max_height", 0.5);
     this->declare_parameter<bool>("filter_rings", true);
     this->declare_parameter<bool>("filter_height", true);
+    this->declare_parameter<bool>("publish_filtered_pointcloud", true);
+    this->declare_parameter<bool>("publish_laserscan", true);
     // LaserScan Parameters
     this->declare_parameter<float>("scan_angle_min", -M_PI);
     this->declare_parameter<float>("scan_angle_max", M_PI);
@@ -57,6 +59,8 @@ public:
     this->get_parameter("max_height", max_height_);
     this->get_parameter("filter_rings", filter_rings_);
     this->get_parameter("filter_height", filter_height_);
+    this->get_parameter("publish_filtered_pointcloud", pub_filtered_pointcloud_);
+    this->get_parameter("publish_laserscan", pub_laserscan_);
     this->get_parameter("scan_angle_min", scan_angle_min_);
     this->get_parameter("scan_angle_max", scan_angle_max_);
     this->get_parameter("scan_angle_increment", scan_angle_increment_);
@@ -66,24 +70,28 @@ public:
     // Calculate the number of bins in the LaserScan message
     num_bins_ = static_cast<int>((scan_angle_max_ - scan_angle_min_) / scan_angle_increment_) + 1; // Add once, since that is ROS standard.
 
-    RCLCPP_INFO(this->get_logger(), 
-  "PointCloud filter node has started with the following parameters:\n"
-  "min_height: %f\n"
-  "max_height: %f\n"
-  "filter_rings: %s\n"
-  "filter_height: %s\n"
-  "scan_angle_min: %f\n"
-  "scan_angle_max: %f\n"
-  "scan_angle_increment: %f\n"
-  "scan_range_min: %f\n"
-  "scan_range_max: %f\n"
-  "num_bins: %d",
-  min_height_, max_height_,
-  filter_rings_ ? "true" : "false",
-  filter_height_ ? "true" : "false",
-  scan_angle_min_, scan_angle_max_, scan_angle_increment_,
-  scan_range_min_, scan_range_max_,
-  num_bins_);
+    RCLCPP_DEBUG(this->get_logger(), 
+    "PointCloud filter node has started with the following parameters:\n"
+    "min_height: %f\n"
+    "max_height: %f\n"
+    "filter_rings: %s\n"
+    "filter_height: %s\n"
+    "publish_filtered_pointcloud: %s\n"
+    "publish_laserscan: %s\n"
+    "scan_angle_min: %f\n"
+    "scan_angle_max: %f\n"
+    "scan_angle_increment: %f\n"
+    "scan_range_min: %f\n"
+    "scan_range_max: %f\n"
+    "num_bins: %d",
+    min_height_, max_height_,
+    filter_rings_ ? "true" : "false",
+    filter_height_ ? "true" : "false",
+    pub_filtered_pointcloud_ ? "true" : "false",
+    pub_laserscan_ ? "true" : "false",
+    scan_angle_min_, scan_angle_max_, scan_angle_increment_,
+    scan_range_min_, scan_range_max_,
+    num_bins_);
   }
 
 private:
@@ -177,33 +185,36 @@ private:
     height_filtered_cloud->header = intermediate_cloud->header;
 
     // --- Step 4: Publish the Filtered 3D Point Cloud ---
-    // If the original cloud had intensity, publish as-is.
-    // Otherwise, convert to a point cloud without intensity.
-    if (has_intensity)
+    if(pub_filtered_pointcloud_)
     {
-      publishFilteredPointCloud(msg->header, height_filtered_cloud);
-    }
-    else
-    {
-      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_no_intensity(new pcl::PointCloud<pcl::PointXYZ>());
-      cloud_no_intensity->header = height_filtered_cloud->header;
-      for (const auto & pt : height_filtered_cloud->points)
+      // If the original cloud had intensity, publish as-is.
+      // Otherwise, convert to a point cloud without intensity.
+      if (has_intensity)
       {
-        pcl::PointXYZ pt_xyz;
-        pt_xyz.x = pt.x;
-        pt_xyz.y = pt.y;
-        pt_xyz.z = pt.z;
-        cloud_no_intensity->points.push_back(pt_xyz);
+        publishFilteredPointCloud(msg->header, height_filtered_cloud);
       }
-      sensor_msgs::msg::PointCloud2 cloud_msg;
-      pcl::toROSMsg(*cloud_no_intensity, cloud_msg);
-      cloud_msg.header = msg->header;
-      filtered_pc_pub_->publish(cloud_msg);
+      else
+      {
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_no_intensity(new pcl::PointCloud<pcl::PointXYZ>());
+        cloud_no_intensity->header = height_filtered_cloud->header;
+        for (const auto & pt : height_filtered_cloud->points)
+        {
+          pcl::PointXYZ pt_xyz;
+          pt_xyz.x = pt.x;
+          pt_xyz.y = pt.y;
+          pt_xyz.z = pt.z;
+          cloud_no_intensity->points.push_back(pt_xyz);
+        }
+        sensor_msgs::msg::PointCloud2 cloud_msg;
+        pcl::toROSMsg(*cloud_no_intensity, cloud_msg);
+        cloud_msg.header = msg->header;
+        filtered_pc_pub_->publish(cloud_msg);
+      }
     }
 
     // --- Step 5: Create and Publish a 2D LaserScan Message ---
     // LaserScan generation uses only spatial coordinates, so intensity is irrelevant.
-    publishLaserScan(msg->header, height_filtered_cloud);
+    if (pub_laserscan_) publishLaserScan(msg->header, height_filtered_cloud);
   }
 
 
@@ -257,6 +268,8 @@ private:
   float max_height_;
   bool filter_rings_;
   bool filter_height_;
+  bool pub_filtered_pointcloud_;
+  bool pub_laserscan_;
 
   // LaserScan parameters
   float scan_angle_min_;
