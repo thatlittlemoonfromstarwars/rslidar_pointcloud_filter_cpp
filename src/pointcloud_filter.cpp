@@ -97,6 +97,14 @@ public:
 private:
   void pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
   {
+    // --- Check for Subscribers ---
+    if ((!pub_filtered_pointcloud_ || filtered_pc_pub_->get_subscription_count() == 0) &&
+        (!pub_laserscan_ || laser_scan_pub_->get_subscription_count() == 0))
+    {
+      RCLCPP_DEBUG(this->get_logger(), "Required subscribers are not connected. Skipping processing.");
+      return;
+    }
+
     // --- Step 0: Detect if the incoming pointcloud has intensity data ---
     bool has_intensity = false;
     for (const auto & field : msg->fields)
@@ -185,7 +193,7 @@ private:
     height_filtered_cloud->header = intermediate_cloud->header;
 
     // --- Step 4: Publish the Filtered 3D Point Cloud ---
-    if(pub_filtered_pointcloud_)
+    if(pub_filtered_pointcloud_ && filtered_pc_pub_->get_subscription_count() != 0)
     {
       // If the original cloud had intensity, publish as-is.
       // Otherwise, convert to a point cloud without intensity.
@@ -214,7 +222,7 @@ private:
 
     // --- Step 5: Create and Publish a 2D LaserScan Message ---
     // LaserScan generation uses only spatial coordinates, so intensity is irrelevant.
-    if (pub_laserscan_) publishLaserScan(msg->header, height_filtered_cloud);
+    if (pub_laserscan_ && laser_scan_pub_->get_subscription_count() != 0) publishLaserScan(msg->header, height_filtered_cloud);
   }
 
 
